@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Buffer } from 'buffer'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { createTokenInfo, createLaunchTransaction, sendTransaction, getBagsPools } from '../services/bagsApi'
@@ -21,7 +22,7 @@ async function uploadToImgBB(file) {
     body: form,
   })
   const data = await res.json()
-  if (!data.success) throw new Error('Gagal upload gambar')
+  if (!data.success) throw new Error('Gagal upload gambar: ' + data.error?.message)
   return data.data.url
 }
 
@@ -42,7 +43,6 @@ export default function LaunchToken({ setPage }) {
   function handleImage(e) {
     const file = e.target.files[0]
     if (!file) return
-    // Resize jika terlalu besar
     if (file.size > 500000) {
       setError('Gambar terlalu besar, maksimal 500KB')
       return
@@ -58,14 +58,14 @@ export default function LaunchToken({ setPage }) {
     setError('')
 
     try {
-      // Step 1: Upload gambar ke ImgBB dulu (langsung dari browser)
+      // Step 1: Upload gambar ke ImgBB
       let imageUrl = ''
       if (imageFile) {
         setStepMsg('1/4 — Upload gambar...')
         imageUrl = await uploadToImgBB(imageFile)
       }
 
-      // Step 2: Kirim metadata ke Bags API pakai imageUrl (bukan file)
+      // Step 2: Upload metadata ke Bags API
       setStepMsg('2/4 — Upload metadata token...')
       const formData = new FormData()
       formData.append('name', form.name)
@@ -85,7 +85,7 @@ export default function LaunchToken({ setPage }) {
       const configKey = pools?.[0]?.dbcConfigKey
       if (!configKey) throw new Error('Config key tidak tersedia')
 
-      // Step 4: Buat transaksi
+      // Step 4: Buat dan sign transaksi
       setStepMsg('4/4 — Sign dengan wallet kamu...')
       const initialBuyLamports = Math.floor(Number(form.initialBuy) * SOL_TO_LAMPORTS)
       const txBase64 = await createLaunchTransaction({
@@ -96,14 +96,18 @@ export default function LaunchToken({ setPage }) {
         configKey,
       })
 
-      const txBuffer = Uint8Array.from(atob(txBase64), c => c.charCodeAt(0))
+      // Deserialize transaksi pakai Buffer (sudah di-import)
+      const txBuffer = Buffer.from(txBase64, 'base64')
       let tx
-      try { tx = VersionedTransaction.deserialize(txBuffer) }
-      catch { tx = Transaction.from(txBuffer) }
+      try {
+        tx = VersionedTransaction.deserialize(txBuffer)
+      } catch {
+        tx = Transaction.from(txBuffer)
+      }
 
+      // Sign dan serialize
       const signed = await signTransaction(tx)
-      const signedBytes = signed.serialize()
-      const signedB64 = btoa(String.fromCharCode(...signedBytes))
+      const signedB64 = Buffer.from(signed.serialize()).toString('base64')
       const signature = await sendTransaction(signedB64)
 
       setResult({ tokenMint, signature, name: form.name, symbol: form.symbol.toUpperCase() })
@@ -152,7 +156,8 @@ export default function LaunchToken({ setPage }) {
         <button onClick={() => {
           setStep('form')
           setForm({ name:'', symbol:'', description:'', twitter:'', website:'', initialBuy:'0.1' })
-          setImageFile(null); setImagePreview('')
+          setImageFile(null)
+          setImagePreview('')
         }} className="px-5 py-2.5 rounded-xl border border-white/20 text-white/70 text-sm hover:bg-white/5">
           Launch lagi
         </button>
