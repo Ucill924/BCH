@@ -42,7 +42,7 @@ export async function handler(event) {
     const res = await fetch(url, fetchOptions)
     let data = await res.json()
 
-    // Trim token feed - ambil field penting saja
+    // Trim token feed
     if (path === '/token-launch/feed' && data.success && Array.isArray(data.response)) {
       data = {
         success: true,
@@ -53,7 +53,19 @@ export async function handler(event) {
       }
     }
 
-    // Trim create-token-info - hanya ambil tokenMint dan URI metadata
+    // Trim pools - hanya ambil 1 pool dengan field yang diperlukan saja
+    if (path === '/solana/bags/pools' && data.success && Array.isArray(data.response)) {
+      data = {
+        success: true,
+        response: data.response.slice(0, 3).map(p => ({
+          dbcConfigKey: p.dbcConfigKey,
+          dbcPoolKey: p.dbcPoolKey,
+          tokenMint: p.tokenMint,
+        }))
+      }
+    }
+
+    // Trim create-token-info
     if (path === '/token-launch/create-token-info' && data.success) {
       const r = data.response
       data = {
@@ -79,7 +91,7 @@ export async function handler(event) {
     if (body.length > 5500000) {
       return {
         statusCode: 200, headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ success: false, error: 'Response too large, please try again' }),
+        body: JSON.stringify({ success: false, error: 'Response too large' }),
       }
     }
 
