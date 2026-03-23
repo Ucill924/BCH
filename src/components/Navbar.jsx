@@ -13,6 +13,7 @@ export default function Navbar({ page, setPage }) {
           {[
             { id: 'leaderboard', label: 'Leaderboard' },
             { id: 'dashboard', label: 'Dashboard' },
+            { id: 'mytokens', label: 'My Tokens' },
             { id: 'launch', label: 'Launch Token' },
           ].map(item => (
             <button key={item.id} onClick={() => setPage(item.id)}
