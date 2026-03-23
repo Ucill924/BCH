@@ -69,15 +69,24 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
     setLoading(true); setError('')
     try {
       const feed = await getTokenFeed()
-      const top = feed.slice(0, 20)
-      const withFees = await Promise.all(
-        top.map(async t => {
-          try { return { ...t, lifetimeFees: await getTokenLifetimeFees(t.tokenMint) } }
-          catch { return { ...t, lifetimeFees: '0' } }
-        })
-      )
-      withFees.sort((a, b) => Number(b.lifetimeFees) - Number(a.lifetimeFees))
-      setTokens(withFees)
+      const top = feed.slice(0, 15)
+      // Tampilkan dulu tanpa fees, lalu fetch fees bertahap
+      setTokens(top.map(t => ({ ...t, lifetimeFees: '0' })))
+      // Fetch fees 3 per batch dengan delay
+      const results = [...top]
+      for (let i = 0; i < top.length; i += 3) {
+        const batch = top.slice(i, i + 3)
+        await Promise.all(batch.map(async (t, bi) => {
+          try {
+            const fees = await getTokenLifetimeFees(t.tokenMint)
+            results[i + bi] = { ...t, lifetimeFees: fees }
+          } catch { results[i + bi] = { ...t, lifetimeFees: '0' } }
+        }))
+        setTokens([...results])
+        if (i + 3 < top.length) await new Promise(r => setTimeout(r, 300))
+      }
+      results.sort((a, b) => Number(b.lifetimeFees) - Number(a.lifetimeFees))
+      setTokens([...results])
     } catch (e) { setError(e.message) }
     setLoading(false)
   }
