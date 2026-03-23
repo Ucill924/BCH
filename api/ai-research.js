@@ -15,7 +15,7 @@ export default async function handler(req, res) {
   const prompt = `Analyze this Solana meme token on Bags.fm:
 TOKEN: ${token.name} ($${token.symbol})
 Description: ${token.description || 'No description'}
-Lifetime Fees: ${lifetimeFeeSol} SOL (higher = more trading volume)
+Lifetime Fees: ${lifetimeFeeSol} SOL (1% from every trade = higher means more volume)
 Status: ${token.status}
 
 Give in 100 words max:
@@ -23,40 +23,28 @@ Give in 100 words max:
 2. ⚠️ Risk: LOW/MEDIUM/HIGH + why
 3. 💡 BUY / HOLD / SKIP + why`
 
-  // Coba beberapa model, fallback kalau gagal
-  const models = [
-    'deepseek/deepseek-chat-v3-0324:free',
-    'meta-llama/llama-3.2-3b-instruct:free',
-    'mistralai/mistral-7b-instruct:free',
-  ]
+  try {
+    const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OPENROUTER_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://bch-gamma.vercel.app',
+        'X-Title': 'Bags Creator Hub',
+      },
+      body: JSON.stringify({
+        model: 'openrouter/free', // Auto-select dari semua model gratis yang tersedia
+        max_tokens: 250,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
 
-  let lastError = ''
-  for (const model of models) {
-    try {
-      const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENROUTER_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://bch-gamma.vercel.app',
-          'X-Title': 'Bags Creator Hub',
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 250,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      })
-
-      const data = await aiRes.json()
-      if (data.error) { lastError = data.error.message; continue }
-      const text = data.choices?.[0]?.message?.content
-      if (text) return res.status(200).json({ result: text, model })
-    } catch (e) {
-      lastError = e.message
-      continue
-    }
+    const data = await aiRes.json()
+    if (data.error) throw new Error(data.error.message || JSON.stringify(data.error))
+    const text = data.choices?.[0]?.message?.content
+    if (!text) throw new Error('No response from AI')
+    return res.status(200).json({ result: text })
+  } catch (e) {
+    return res.status(500).json({ error: e.message })
   }
-
-  return res.status(500).json({ error: 'All models failed: ' + lastError })
 }
