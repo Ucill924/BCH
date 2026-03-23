@@ -42,7 +42,7 @@ export async function handler(event) {
     const res = await fetch(url, fetchOptions)
     let data = await res.json()
 
-    // Trim token feed
+    // Trim token feed - ambil field penting saja
     if (path === '/token-launch/feed' && data.success && Array.isArray(data.response)) {
       data = {
         success: true,
@@ -53,14 +53,14 @@ export async function handler(event) {
       }
     }
 
-    // Trim create-token-info (bisa sangat besar)
+    // Trim create-token-info - hanya ambil tokenMint dan URI metadata
     if (path === '/token-launch/create-token-info' && data.success) {
+      const r = data.response
       data = {
         success: true,
         response: {
-          tokenMint: data.response?.tokenMint,
-          tokenMetadata: data.response?.tokenMetadata ||
-            data.response?.tokenLaunch?.uri,
+          tokenMint: r?.tokenMint || r?.tokenLaunch?.tokenMint,
+          tokenMetadata: r?.tokenMetadata || r?.tokenLaunch?.uri || r?.uri,
         }
       }
     }
@@ -75,10 +75,11 @@ export async function handler(event) {
     }
 
     const body = JSON.stringify(data)
+
     if (body.length > 5500000) {
       return {
         statusCode: 200, headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ success: false, error: 'Response too large' }),
+        body: JSON.stringify({ success: false, error: 'Response too large, please try again' }),
       }
     }
 
