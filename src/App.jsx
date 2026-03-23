@@ -8,6 +8,7 @@ import Navbar from './components/Navbar'
 import Leaderboard from './pages/Leaderboard'
 import Dashboard from './pages/Dashboard'
 import LaunchToken from './pages/LaunchToken'
+import MyTokens from './pages/MyTokens'
 
 function AppInner() {
   const [page, setPage] = useState('leaderboard')
@@ -19,6 +20,7 @@ function AppInner() {
       {page === 'leaderboard' && <Leaderboard setPage={setPage} setSelectedToken={setSelectedToken} />}
       {page === 'dashboard' && <Dashboard selectedToken={selectedToken} setSelectedToken={setSelectedToken} />}
       {page === 'launch' && <LaunchToken setPage={setPage} />}
+      {page === 'mytokens' && <MyTokens setPage={setPage} setSelectedToken={setSelectedToken} />}
     </div>
   )
 }
@@ -26,7 +28,6 @@ function AppInner() {
 export default function App() {
   const endpoint = useMemo(() => clusterApiUrl('mainnet-beta'), [])
   const wallets = useMemo(() => [new PhantomWalletAdapter(), new SolflareWalletAdapter()], [])
-
   return (
     <ConnectionProvider endpoint={endpoint}>
       <WalletProvider wallets={wallets} autoConnect>
