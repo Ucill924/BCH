@@ -8,16 +8,10 @@ export async function handler(event) {
     'Access-Control-Allow-Headers': 'Content-Type',
   }
 
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 200, headers, body: '' }
-  }
-
-  if (!API_KEY) {
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({ success: false, error: 'API key not configured on server' }),
-    }
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' }
+  if (!API_KEY) return {
+    statusCode: 500, headers,
+    body: JSON.stringify({ success: false, error: 'API key not configured' }),
   }
 
   try {
@@ -25,9 +19,7 @@ export async function handler(event) {
     const path = params.get('path') || ''
     params.delete('path')
 
-    const queryStr = params.toString()
-    const url = `${BAGS_API}${path}${queryStr ? '?' + queryStr : ''}`
-
+    const url = `${BAGS_API}${path}${params.toString() ? '?' + params.toString() : ''}`
     const isMultipart = event.headers['content-type']?.includes('multipart/form-data')
 
     const fetchOptions = {
@@ -50,26 +42,42 @@ export async function handler(event) {
     const res = await fetch(url, fetchOptions)
     let data = await res.json()
 
+    // Trim token feed
     if (path === '/token-launch/feed' && data.success && Array.isArray(data.response)) {
       data = {
         success: true,
         response: data.response.slice(0, 30).map(t => ({
-          name: t.name,
-          symbol: t.symbol,
-          image: t.image,
-          tokenMint: t.tokenMint,
-          status: t.status,
-          description: t.description?.slice(0, 100),
+          name: t.name, symbol: t.symbol, image: t.image,
+          tokenMint: t.tokenMint, status: t.status,
         }))
       }
     }
 
-    const body = JSON.stringify(data)
+    // Trim create-token-info (bisa sangat besar)
+    if (path === '/token-launch/create-token-info' && data.success) {
+      data = {
+        success: true,
+        response: {
+          tokenMint: data.response?.tokenMint,
+          tokenMetadata: data.response?.tokenMetadata ||
+            data.response?.tokenLaunch?.uri,
+        }
+      }
+    }
 
-    if (body.length > 5000000) {
+    // Trim claim events
+    if (path === '/fee-share/token/claim-events' && data.success) {
+      const events = data.response?.events || []
+      data = {
+        success: true,
+        response: { events: events.slice(0, 20) }
+      }
+    }
+
+    const body = JSON.stringify(data)
+    if (body.length > 5500000) {
       return {
-        statusCode: 200,
-        headers: { ...headers, 'Content-Type': 'application/json' },
+        statusCode: 200, headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ success: false, error: 'Response too large' }),
       }
     }
@@ -81,8 +89,7 @@ export async function handler(event) {
     }
   } catch (err) {
     return {
-      statusCode: 500,
-      headers,
+      statusCode: 500, headers,
       body: JSON.stringify({ success: false, error: err.message }),
     }
   }
