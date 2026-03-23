@@ -69,15 +69,16 @@ export default function LaunchToken({ setPage }) {
 
       // Step 2: Upload metadata ke Bags API
       setStepMsg('2/4 — Upload metadata token...')
-      const formData = new FormData()
-      formData.append('name', form.name)
-      formData.append('symbol', form.symbol.toUpperCase())
-      formData.append('description', form.description || '-')
-      if (imageUrl) formData.append('imageUrl', imageUrl)
-      if (form.twitter) formData.append('twitter', form.twitter)
-      if (form.website) formData.append('website', form.website)
+      const tokenPayload = {
+        name: form.name,
+        symbol: form.symbol.toUpperCase(),
+        description: form.description || '-',
+        ...(imageUrl && { imageUrl }),
+        ...(form.twitter && { twitter: form.twitter }),
+        ...(form.website && { website: form.website }),
+  }
 
-      const info = await createTokenInfo(formData)
+const info = await createTokenInfo(tokenPayload)
       const { tokenMint, tokenMetadata } = info
       if (!tokenMint) throw new Error('Token mint tidak ditemukan di response')
 
