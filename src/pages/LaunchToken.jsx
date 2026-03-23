@@ -108,8 +108,9 @@ export default function LaunchToken({ setPage }) {
 
       // Sign dan kirim
       const signed = await signTransaction(tx)
-      const signedB64 = Buffer.from(signed.serialize()).toString('base64')
-      const signature = await sendTransaction(signedB64)
+      const signedBytes = signed.serialize()
+      const signedB58 = bs58.encode(signedBytes)
+      const signature = await sendTransaction(signedB58)
 
       setResult({ tokenMint, signature, name: form.name, symbol: form.symbol.toUpperCase() })
       setStep('done')
