@@ -27,7 +27,6 @@ Give:
 Max 120 words. Direct, crypto-native tone.`
 
   try {
-    // AgentRouter pakai OpenAI-compatible format
     const aiRes = await fetch('https://agentrouter.org/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -37,9 +36,19 @@ Max 120 words. Direct, crypto-native tone.`
       body: JSON.stringify({
         model: 'deepseek-v3.1',
         max_tokens: 300,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [
+          { role: 'system', content: 'You are a helpful crypto analyst.' },
+          { role: 'user', content: prompt }
+        ],
       }),
     })
+
+    // Debug: cek response type dulu
+    const contentType = aiRes.headers.get('content-type') || ''
+    if (!contentType.includes('application/json')) {
+      const text = await aiRes.text()
+      throw new Error(`Server returned non-JSON: ${text.slice(0, 100)}`)
+    }
 
     const data = await aiRes.json()
     if (data.error) throw new Error(data.error.message || JSON.stringify(data.error))
