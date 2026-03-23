@@ -22,10 +22,10 @@ export default function Navbar({ page, setPage }) {
           <img src="/logo.png" alt="Bags Creator Hub" style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }} />
           <div>
             <div style={{ fontFamily: 'Orbitron', fontSize: 13, fontWeight: 700, color: '#00f5ff', letterSpacing: '0.1em' }}>
-              BAGS.HUB
+              BAGS HUB
             </div>
             <div style={{ fontFamily: 'Share Tech Mono', fontSize: 9, color: 'rgba(0,245,255,0.5)', letterSpacing: '0.2em' }}>
-              CREATOR TERMINAL v2.0
+              CREATOR TERMINAL
             </div>
           </div>
         </div>
