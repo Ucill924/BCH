@@ -1,8 +1,13 @@
 const BAGS_API = 'https://public-api-v2.bags.fm/api/v1'
 const API_KEY = process.env.BAGS_API_KEY
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+}
+
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
@@ -15,23 +20,25 @@ export default async function handler(req, res) {
     const queryStr = new URLSearchParams(rest).toString()
     const url = `${BAGS_API}${path}${queryStr ? '?' + queryStr : ''}`
 
-    const isMultipart = req.headers['content-type']?.includes('multipart/form-data')
+    const contentType = req.headers['content-type'] || ''
 
     const fetchOptions = {
       method: req.method,
       headers: {
         'x-api-key': API_KEY,
-        ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
       },
     }
 
-    if (req.method === 'POST' && req.body) {
-      if (isMultipart) {
-        fetchOptions.body = req.body
-        fetchOptions.headers['content-type'] = req.headers['content-type']
-      } else {
-        fetchOptions.body = JSON.stringify(req.body)
+    if (req.method === 'POST') {
+      // Baca raw body
+      const chunks = []
+      for await (const chunk of req) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
       }
+      const rawBody = Buffer.concat(chunks)
+
+      fetchOptions.body = rawBody
+      fetchOptions.headers['content-type'] = contentType
     }
 
     const apiRes = await fetch(url, fetchOptions)
@@ -76,6 +83,19 @@ export default async function handler(req, res) {
     if (path === '/fee-share/token/claim-events' && data.success) {
       const events = data.response?.events || []
       data = { success: true, response: { events: events.slice(0, 20) } }
+    }
+
+    // Trim claimable positions
+    if (path === '/token-launch/claimable-positions' && data.success && Array.isArray(data.response)) {
+      data = {
+        success: true,
+        response: data.response.map(p => ({
+          baseMint: p.baseMint,
+          totalClaimableLamportsUserShare: p.totalClaimableLamportsUserShare,
+          claimableDisplayAmount: p.claimableDisplayAmount,
+          user: p.user,
+        }))
+      }
     }
 
     return res.status(apiRes.status).json(data)
