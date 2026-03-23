@@ -22,8 +22,8 @@ async function post(path, body, isFormData = false) {
 
 export const getTokenFeed = () => get('/token-launch/feed')
 export const getTokenLifetimeFees = (tokenMint) => get('/token-launch/lifetime-fees', { tokenMint })
-export const getTokenClaimStats = (tokenMint) => get('/token-launch/claim-stats', { tokenMint })
-export const getTokenClaimEvents = (tokenMint) => get('/token-launch/claim-events', { tokenMint })
+export const getTokenClaimStats = (tokenMint) => get('/fee-share/token/claim-stats', { tokenMint })
+export const getTokenClaimEvents = (tokenMint) => get('/fee-share/token/claim-events', { tokenMint, limit: '20' })
 export const getTokenCreators = (wallet) => get('/token-launch/creators', { wallet })
 export const getBagsPools = () => get('/solana/bags/pools')
 export const getPoolByTokenMint = (tokenMint) => get('/solana/bags/pools/token-mint', { tokenMint })
