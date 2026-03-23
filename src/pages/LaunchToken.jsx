@@ -76,9 +76,9 @@ export default function LaunchToken({ setPage }) {
         ...(imageUrl && { imageUrl }),
         ...(form.twitter && { twitter: form.twitter }),
         ...(form.website && { website: form.website }),
-  }
+      }
 
-const info = await createTokenInfo(tokenPayload)
+      const info = await createTokenInfo(tokenPayload)
       const { tokenMint, tokenMetadata } = info
       if (!tokenMint) throw new Error('Token mint tidak ditemukan di response')
 
