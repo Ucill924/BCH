@@ -5,7 +5,7 @@ import { createTokenInfo, createLaunchTransaction, sendTransaction, getBagsPools
 import { VersionedTransaction, Transaction } from '@solana/web3.js'
 
 const SOL_TO_LAMPORTS = 1_000_000_000
-const IMGBB_API_KEY = 'a8b5e6d2f4c9f3a7e1b2d4c6a8b9e3f5'
+const IMGBB_API_KEY = '8be3cfa2c9a1b53c82039a958ab9894e'
 
 async function uploadToImgBB(file) {
   const base64 = await new Promise((resolve, reject) => {
