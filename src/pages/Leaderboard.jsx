@@ -8,15 +8,19 @@ import { getTokenFeed, getTokenLifetimeFees, formatSol, shortAddress, lamportsTo
 
 const PROXY = '/api/bags-proxy'
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
+const BCH_TOKEN_MINT = 'C22JrdRJBsT7PRHw75mx3TNmbQ976rqBq2qAiHcoBAGS'
+const BCH_TOKEN = {
+  name: 'Bags Creator Hub',
+  symbol: 'BCH',
+  image: '/logo.png',
+  tokenMint: BCH_TOKEN_MINT,
+  description: 'The ultimate creator terminal for Bags.fm — launch tokens, track fees, AI research & swap in one place.',
+  status: 'PRE_GRAD',
+  lifetimeFees: '0',
+}
 
 async function getQuote(tokenMint, amountLamports) {
-  const q = new URLSearchParams({
-    path: '/trade/quote',
-    inputMint: SOL_MINT,
-    outputMint: tokenMint,
-    amount: amountLamports,
-    slippageMode: 'auto',
-  })
+  const q = new URLSearchParams({ path: '/trade/quote', inputMint: SOL_MINT, outputMint: tokenMint, amount: amountLamports, slippageMode: 'auto' })
   const res = await fetch(`${PROXY}?${q}`)
   const data = await res.json()
   if (!data.success) throw new Error(data.error)
@@ -26,8 +30,7 @@ async function getQuote(tokenMint, amountLamports) {
 async function createSwap(quoteResponse, userPublicKey) {
   const q = new URLSearchParams({ path: '/trade/swap' })
   const res = await fetch(`${PROXY}?${q}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ quoteResponse, userPublicKey }),
   })
   const data = await res.json()
@@ -38,13 +41,22 @@ async function createSwap(quoteResponse, userPublicKey) {
 async function sendTx(transaction) {
   const q = new URLSearchParams({ path: '/solana/send-transaction' })
   const res = await fetch(`${PROXY}?${q}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ transaction }),
   })
   const data = await res.json()
   if (!data.success) throw new Error(data.error)
   return data.response
+}
+
+async function fetchSingleToken(tokenMint) {
+  // Coba ambil dari feed dulu, kalau tidak ada pakai lifetime fees saja
+  try {
+    const fees = await getTokenLifetimeFees(tokenMint)
+    return { tokenMint, lifetimeFees: fees, name: 'Unknown', symbol: '???', status: 'ACTIVE' }
+  } catch {
+    throw new Error('Token not found')
+  }
 }
 
 export default function Leaderboard({ setPage, setSelectedToken }) {
@@ -53,7 +65,7 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState(null)
-  const [mode, setMode] = useState('buy') // 'buy' | 'ai'
+  const [mode, setMode] = useState('buy')
   const [aiResult, setAiResult] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [buyAmount, setBuyAmount] = useState('0.01')
@@ -62,17 +74,28 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
   const [swapLoading, setSwapLoading] = useState(false)
   const [swapMsg, setSwapMsg] = useState('')
   const [swapSuccess, setSwapSuccess] = useState('')
+  const [searchMint, setSearchMint] = useState('')
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [bchFees, setBchFees] = useState('0')
 
-  useEffect(() => { loadFeed() }, [])
+  useEffect(() => {
+    loadFeed()
+    loadBCHFees()
+  }, [])
+
+  async function loadBCHFees() {
+    try {
+      const fees = await getTokenLifetimeFees(BCH_TOKEN_MINT)
+      setBchFees(fees)
+    } catch {}
+  }
 
   async function loadFeed() {
     setLoading(true); setError('')
     try {
       const feed = await getTokenFeed()
       const top = feed.slice(0, 15)
-      // Tampilkan dulu tanpa fees, lalu fetch fees bertahap
       setTokens(top.map(t => ({ ...t, lifetimeFees: '0' })))
-      // Fetch fees 3 per batch dengan delay
       const results = [...top]
       for (let i = 0; i < top.length; i += 3) {
         const batch = top.slice(i, i + 3)
@@ -91,13 +114,28 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
     setLoading(false)
   }
 
+  async function handleSearch() {
+    if (!searchMint.trim()) return
+    setSearchLoading(true)
+    try {
+      const fees = await getTokenLifetimeFees(searchMint.trim())
+      // Find in current list or create basic entry
+      const existing = tokens.find(t => t.tokenMint === searchMint.trim())
+      const token = existing || { tokenMint: searchMint.trim(), name: 'Token', symbol: '???', status: 'ACTIVE', lifetimeFees: fees }
+      setSelectedToken(searchMint.trim())
+      setPage('dashboard')
+    } catch (e) {
+      setError('Token not found: ' + e.message)
+    }
+    setSearchLoading(false)
+  }
+
   async function handleAI(token) {
     setSelected(token); setMode('ai'); setAiResult(''); setSwapSuccess(''); setQuote(null)
     setAiLoading(true)
     try {
       const res = await fetch('/api/ai-research', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
       })
       const data = await res.json()
@@ -133,28 +171,92 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
       const sig = await sendTx(signedB58)
       setSwapSuccess(`✅ Swap success! TX: ${sig?.slice(0,16)}...`)
       setSwapMsg(''); setQuote(null)
-    } catch (e) { setSwapMsg(''); setSwapSuccess(''); setError('Swap failed: ' + e.message) }
+    } catch (e) { setSwapMsg(''); setError('Swap failed: ' + e.message) }
     setSwapLoading(false)
   }
 
   const s = {
-    card: { borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'all 0.2s', background: 'rgba(0,245,255,0.02)', border: '1px solid rgba(0,245,255,0.08)', marginBottom: 8 },
     label: { fontFamily: 'Orbitron', fontSize: 9, color: 'rgba(0,245,255,0.6)', letterSpacing: '0.1em', marginBottom: 6, display: 'block' },
     input: { width: '100%', padding: '9px 12px', background: 'rgba(0,255,136,0.03)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 6, color: '#00ff88', fontFamily: 'Share Tech Mono', fontSize: 13, outline: 'none' },
   }
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '2rem 1rem', position: 'relative', zIndex: 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '1.5rem 1rem', position: 'relative', zIndex: 1 }}>
+
+      {/* BCH PROMO BANNER */}
+      <div style={{
+        marginBottom: '1.5rem', padding: '1rem 1.5rem',
+        background: 'linear-gradient(135deg, rgba(0,245,255,0.08), rgba(123,47,255,0.08))',
+        border: '1px solid rgba(0,245,255,0.25)',
+        borderRadius: 12,
+        display: 'flex', alignItems: 'center', gap: 16,
+        flexWrap: 'wrap',
+      }}>
+        <img src="/logo.png" alt="BCH" style={{ width: 52, height: 52, borderRadius: 10, objectFit: 'cover', border: '1px solid rgba(0,245,255,0.3)' }} />
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontFamily: 'Orbitron', fontSize: 14, fontWeight: 700, color: '#00f5ff' }}>Bags Creator Hub</span>
+            <span style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(0,245,255,0.6)' }}>$BCH</span>
+            <span style={{ fontFamily: 'Share Tech Mono', fontSize: 9, padding: '2px 6px', borderRadius: 3, background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', color: '#00ff88' }}>FEATURED</span>
+          </div>
+          <div style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+            The ultimate creator terminal for Bags.fm — launch tokens, track fees, AI research & swap in one place.
+          </div>
+          <div style={{ marginTop: 4, fontFamily: 'Share Tech Mono', fontSize: 10, color: '#00f5ff' }}>
+            Lifetime Fees: {formatSol(bchFees)}
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <button
+            className="btn-cyber btn-purple"
+            style={{ padding: '8px 14px', borderRadius: 8, fontSize: 10 }}
+            onClick={() => handleAI({ ...BCH_TOKEN, lifetimeFees: bchFees })}
+          >🤖 AI ANALYSIS</button>
+          <button
+            className="btn-cyber btn-green"
+            style={{ padding: '8px 14px', borderRadius: 8, fontSize: 10 }}
+            onClick={() => { setSelected({ ...BCH_TOKEN, lifetimeFees: bchFees }); setMode('buy'); setAiResult(''); setSwapSuccess(''); setQuote(null) }}
+          >◎ BUY $BCH</button>
+        </div>
+      </div>
+
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontFamily: 'Orbitron', fontSize: 22, fontWeight: 700, color: '#00f5ff', letterSpacing: '0.05em' }}>◈ TOKEN RADAR</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          <h1 style={{ fontFamily: 'Orbitron', fontSize: 20, fontWeight: 700, color: '#00f5ff', letterSpacing: '0.05em' }}>◈ TOKEN RADAR</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
             <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#00ff88', boxShadow: '0 0 6px #00ff88' }} />
             <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: '#00ff88' }}>LIVE — SORTED BY LIFETIME FEES</span>
           </div>
         </div>
-        <button onClick={loadFeed} disabled={loading} className="btn-cyber" style={{ padding: '8px 16px', borderRadius: 6 }}>
+        <button onClick={loadFeed} disabled={loading} className="btn-cyber" style={{ padding: '8px 16px', borderRadius: 6, fontSize: 10 }}>
           {loading ? '◌ SCANNING...' : '◎ REFRESH'}
+        </button>
+      </div>
+
+      {/* Search by contract */}
+      <div style={{ marginBottom: '1rem', display: 'flex', gap: 8 }}>
+        <input
+          type="text"
+          placeholder="Search by contract address (mint)..."
+          value={searchMint}
+          onChange={e => setSearchMint(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleSearch()}
+          style={{
+            flex: 1, padding: '9px 14px',
+            background: 'rgba(0,245,255,0.03)',
+            border: '1px solid rgba(0,245,255,0.15)',
+            borderRadius: 8, color: '#e2e8f0',
+            fontFamily: 'Share Tech Mono', fontSize: 12, outline: 'none',
+          }}
+        />
+        <button
+          onClick={handleSearch}
+          disabled={searchLoading || !searchMint}
+          className="btn-cyber"
+          style={{ padding: '9px 16px', borderRadius: 8, fontSize: 10 }}
+        >
+          {searchLoading ? '◌' : '⌕ SEARCH'}
         </button>
       </div>
 
@@ -169,9 +271,11 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
             ))
           ) : tokens.map((token, idx) => (
             <div key={token.tokenMint} style={{
-              ...s.card,
+              borderRadius: 10, padding: '12px 16px',
+              display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+              transition: 'all 0.2s', marginBottom: 8,
+              background: selected?.tokenMint === token.tokenMint ? 'rgba(0,245,255,0.05)' : 'rgba(0,245,255,0.02)',
               border: selected?.tokenMint === token.tokenMint ? '1px solid rgba(0,245,255,0.35)' : '1px solid rgba(0,245,255,0.08)',
-              boxShadow: selected?.tokenMint === token.tokenMint ? '0 0 15px rgba(0,245,255,0.08)' : 'none',
             }}
               onClick={() => { setSelectedToken(token.tokenMint); setPage('dashboard') }}
             >
@@ -197,7 +301,7 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
               </div>
               <div style={{ textAlign: 'right', flexShrink: 0, marginRight: 8 }}>
                 <div style={{ fontFamily: 'Orbitron', fontSize: 12, fontWeight: 600, color: '#00f5ff' }}>{formatSol(token.lifetimeFees || 0)}</div>
-                <div style={{ fontFamily: 'Share Tech Mono', fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>fees</div>
+                <div style={{ fontFamily: 'Share Tech Mono', fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>lifetime fees</div>
               </div>
               <div style={{ display: 'flex', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                 <button className="btn-cyber btn-purple" style={{ padding: '5px 8px', borderRadius: 5, fontSize: 9 }}
@@ -212,7 +316,6 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
         {/* Side panel */}
         {selected && (
           <div className="neon-card" style={{ borderRadius: 12, padding: '1.25rem', height: 'fit-content', position: 'sticky', top: 80 }}>
-            {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid rgba(0,245,255,0.1)' }}>
               <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', border: '1px solid rgba(0,245,255,0.3)', background: 'rgba(0,245,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {selected.image && <img src={selected.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
@@ -225,20 +328,18 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
                 style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
             </div>
 
-            {/* Mode tabs */}
             <div style={{ display: 'flex', gap: 6, marginBottom: '1rem' }}>
               <button onClick={() => setMode('ai')} className={mode === 'ai' ? 'btn-cyber btn-purple' : 'btn-cyber'}
                 style={{ flex: 1, padding: '7px', borderRadius: 6, fontSize: 10 }}>🤖 AI RESEARCH</button>
               <button onClick={() => setMode('buy')} className={mode === 'buy' ? 'btn-cyber btn-green' : 'btn-cyber'}
-                style={{ flex: 1, padding: '7px', borderRadius: 6, fontSize: 10 }}>◎ BUY TOKEN</button>
+                style={{ flex: 1, padding: '7px', borderRadius: 6, fontSize: 10 }}>◎ BUY</button>
             </div>
 
-            {/* AI Panel */}
             {mode === 'ai' && (
               <div>
                 {aiLoading ? (
                   <div style={{ padding: '1rem', background: 'rgba(123,47,255,0.05)', borderRadius: 8, border: '1px solid rgba(123,47,255,0.2)' }}>
-                    <div style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(167,139,250,0.8)', marginBottom: 8 }}>◌ Analyzing...</div>
+                    <div style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(167,139,250,0.8)', marginBottom: 8 }}>◌ Analyzing with AI...</div>
                     <div style={{ height: 2, background: 'rgba(123,47,255,0.15)', borderRadius: 1, overflow: 'hidden' }}>
                       <div className="load-bar" style={{ height: '100%', background: '#7b2fff', borderRadius: 1 }} />
                     </div>
@@ -254,7 +355,6 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
               </div>
             )}
 
-            {/* Buy Panel */}
             {mode === 'buy' && (
               <div>
                 {!publicKey ? (
@@ -279,12 +379,10 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
                         </button>
                       ))}
                     </div>
-
-                    {/* Quote info */}
                     {quote && (
                       <div style={{ padding: '10px 12px', background: 'rgba(0,255,136,0.04)', border: '1px solid rgba(0,255,136,0.15)', borderRadius: 8, marginBottom: 10 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                          <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>You get</span>
+                          <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>You receive</span>
                           <span style={{ fontFamily: 'Orbitron', fontSize: 11, color: '#00ff88' }}>
                             {(Number(quote.outAmount) / 1e6).toLocaleString()} {selected.symbol}
                           </span>
@@ -297,20 +395,17 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
                         </div>
                       </div>
                     )}
-
                     {swapMsg && (
                       <div style={{ padding: '8px 12px', background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.2)', borderRadius: 6, marginBottom: 10, fontFamily: 'Share Tech Mono', fontSize: 11, color: '#00f5ff', display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 12, height: 12, border: '2px solid #00f5ff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', flexShrink: 0 }} />
                         {swapMsg}
                       </div>
                     )}
-
                     {swapSuccess && (
                       <div style={{ padding: '8px 12px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.3)', borderRadius: 6, marginBottom: 10, fontFamily: 'Share Tech Mono', fontSize: 11, color: '#00ff88' }}>
                         {swapSuccess}
                       </div>
                     )}
-
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {!quote ? (
                         <button className="btn-cyber" style={{ padding: '10px', borderRadius: 8, fontSize: 11 }}
