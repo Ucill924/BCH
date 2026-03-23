@@ -4,6 +4,7 @@ import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
 import { PhantomWalletAdapter } from '@solana/wallet-adapter-phantom'
 import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare'
 import { clusterApiUrl } from '@solana/web3.js'
+import GalaxyBackground from './components/GalaxyBackground'
 import Navbar from './components/Navbar'
 import Leaderboard from './pages/Leaderboard'
 import Dashboard from './pages/Dashboard'
@@ -15,12 +16,16 @@ function AppInner() {
   const [selectedToken, setSelectedToken] = useState('')
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a]">
-      <Navbar page={page} setPage={setPage} />
-      {page === 'leaderboard' && <Leaderboard setPage={setPage} setSelectedToken={setSelectedToken} />}
-      {page === 'dashboard' && <Dashboard selectedToken={selectedToken} setSelectedToken={setSelectedToken} />}
-      {page === 'launch' && <LaunchToken setPage={setPage} />}
-      {page === 'mytokens' && <MyTokens setPage={setPage} setSelectedToken={setSelectedToken} />}
+    <div style={{ minHeight: '100vh', background: '#030712', position: 'relative' }}>
+      <GalaxyBackground />
+      <div className="scan-line" />
+      <div style={{ position: 'relative', zIndex: 1 }}>
+        <Navbar page={page} setPage={setPage} />
+        {page === 'leaderboard' && <Leaderboard setPage={setPage} setSelectedToken={setSelectedToken} />}
+        {page === 'dashboard' && <Dashboard selectedToken={selectedToken} setSelectedToken={setSelectedToken} />}
+        {page === 'launch' && <LaunchToken setPage={setPage} />}
+        {page === 'mytokens' && <MyTokens setPage={setPage} setSelectedToken={setSelectedToken} />}
+      </div>
     </div>
   )
 }
