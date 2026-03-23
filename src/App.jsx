@@ -10,6 +10,7 @@ import Leaderboard from './pages/Leaderboard'
 import Dashboard from './pages/Dashboard'
 import LaunchToken from './pages/LaunchToken'
 import MyTokens from './pages/MyTokens'
+import Trending from './pages/Trending'
 
 function AppInner() {
   const [page, setPage] = useState('leaderboard')
@@ -25,6 +26,7 @@ function AppInner() {
         {page === 'dashboard' && <Dashboard selectedToken={selectedToken} setSelectedToken={setSelectedToken} />}
         {page === 'launch' && <LaunchToken setPage={setPage} />}
         {page === 'mytokens' && <MyTokens setPage={setPage} setSelectedToken={setSelectedToken} />}
+      {page === 'trending' && <Trending setPage={setPage} setSelectedToken={setSelectedToken} />}
       </div>
     </div>
   )
