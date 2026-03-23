@@ -1,77 +1,77 @@
 import { useEffect, useState } from 'react'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import { VersionedTransaction, Transaction } from '@solana/web3.js'
+import { Buffer } from 'buffer'
+import bs58 from 'bs58'
 import { getTokenFeed, getTokenLifetimeFees, formatSol, shortAddress, lamportsToSol } from '../services/bagsApi'
 
-const OPENROUTER_KEY = import.meta.env.VITE_OPENROUTER_KEY || ''
 const PROXY = '/api/bags-proxy'
+const SOL_MINT = 'So11111111111111111111111111111111111111112'
 
-async function getTradeQuote(tokenMint, amountSol) {
-  const lamports = Math.floor(amountSol * 1e9)
-  const q = new URLSearchParams({ path: '/trade/quote', tokenMint, amount: lamports, side: 'buy' })
+async function getQuote(tokenMint, amountLamports) {
+  const q = new URLSearchParams({
+    path: '/trade/quote',
+    inputMint: SOL_MINT,
+    outputMint: tokenMint,
+    amount: amountLamports,
+    slippageMode: 'auto',
+  })
   const res = await fetch(`${PROXY}?${q}`)
   const data = await res.json()
-  return data.success ? data.response : null
+  if (!data.success) throw new Error(data.error)
+  return data.response
 }
 
-async function createSwap(tokenMint, wallet, amountSol) {
-  const lamports = Math.floor(amountSol * 1e9)
+async function createSwap(quoteResponse, userPublicKey) {
   const q = new URLSearchParams({ path: '/trade/swap' })
   const res = await fetch(`${PROXY}?${q}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tokenMint, wallet, amountIn: lamports, side: 'buy' }),
+    body: JSON.stringify({ quoteResponse, userPublicKey }),
   })
   const data = await res.json()
   if (!data.success) throw new Error(data.error)
   return data.response
 }
 
-async function aiResearch(token) {
-  const prompt = `Analyze this Solana meme token on Bags.fm and give a brief research report:
-Token: ${token.name} ($${token.symbol})
-Description: ${token.description || 'N/A'}
-Lifetime Fees: ${lamportsToSol(token.lifetimeFees || 0).toFixed(4)} SOL
-Status: ${token.status}
-
-Give: 1) Quick summary 2) Risk level (Low/Med/High) 3) Buy/Skip recommendation with reason. Keep it under 150 words. Be direct and crypto-native.`
-
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+async function sendTx(transaction) {
+  const q = new URLSearchParams({ path: '/solana/send-transaction' })
+  const res = await fetch(`${PROXY}?${q}`, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${OPENROUTER_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': window.location.origin,
-    },
-    body: JSON.stringify({
-      model: 'google/gemini-flash-1.5',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 200,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transaction }),
   })
   const data = await res.json()
-  return data.choices?.[0]?.message?.content || 'AI analysis unavailable'
+  if (!data.success) throw new Error(data.error)
+  return data.response
 }
 
 export default function Leaderboard({ setPage, setSelectedToken }) {
+  const { publicKey, signTransaction } = useWallet()
   const [tokens, setTokens] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [selected, setSelected] = useState(null)
+  const [mode, setMode] = useState('buy') // 'buy' | 'ai'
   const [aiResult, setAiResult] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [buyAmount, setBuyAmount] = useState('0.01')
-  const [buyLoading, setBuyLoading] = useState(false)
   const [quote, setQuote] = useState(null)
+  const [quoteLoading, setQuoteLoading] = useState(false)
+  const [swapLoading, setSwapLoading] = useState(false)
+  const [swapMsg, setSwapMsg] = useState('')
+  const [swapSuccess, setSwapSuccess] = useState('')
 
   useEffect(() => { loadFeed() }, [])
 
   async function loadFeed() {
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     try {
       const feed = await getTokenFeed()
       const top = feed.slice(0, 20)
       const withFees = await Promise.all(
-        top.map(async (t) => {
+        top.map(async t => {
           try { return { ...t, lifetimeFees: await getTokenLifetimeFees(t.tokenMint) } }
           catch { return { ...t, lifetimeFees: '0' } }
         })
@@ -82,229 +82,249 @@ export default function Leaderboard({ setPage, setSelectedToken }) {
     setLoading(false)
   }
 
-  async function handleAIResearch(token) {
-    setSelected(token)
-    setAiResult('')
+  async function handleAI(token) {
+    setSelected(token); setMode('ai'); setAiResult(''); setSwapSuccess(''); setQuote(null)
     setAiLoading(true)
-    setQuote(null)
     try {
-      const result = await aiResearch(token)
-      setAiResult(result)
-    } catch (e) { setAiResult('AI research failed: ' + e.message) }
+      const res = await fetch('/api/ai-research', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+      const data = await res.json()
+      setAiResult(data.result || data.error || 'No result')
+    } catch (e) { setAiResult('Error: ' + e.message) }
     setAiLoading(false)
   }
 
-  async function handleGetQuote(token) {
+  async function handleGetQuote() {
+    if (!selected) return
+    setQuoteLoading(true); setQuote(null)
     try {
-      const q = await getTradeQuote(token.tokenMint, parseFloat(buyAmount))
+      const lamports = Math.floor(parseFloat(buyAmount) * 1e9)
+      const q = await getQuote(selected.tokenMint, lamports)
       setQuote(q)
-    } catch (e) { console.error(e) }
+    } catch (e) { setSwapMsg('Quote error: ' + e.message) }
+    setQuoteLoading(false)
+  }
+
+  async function handleSwap() {
+    if (!quote || !publicKey || !signTransaction) return
+    setSwapLoading(true); setSwapMsg('Creating swap tx...'); setSwapSuccess('')
+    try {
+      const swapData = await createSwap(quote, publicKey.toString())
+      setSwapMsg('Sign in Phantom...')
+      const txBuffer = bs58.decode(swapData.swapTransaction)
+      let tx
+      try { tx = VersionedTransaction.deserialize(txBuffer) }
+      catch { tx = Transaction.from(Buffer.from(txBuffer)) }
+      const signed = await signTransaction(tx)
+      const signedB58 = bs58.encode(signed.serialize())
+      setSwapMsg('Sending...')
+      const sig = await sendTx(signedB58)
+      setSwapSuccess(`✅ Swap success! TX: ${sig?.slice(0,16)}...`)
+      setSwapMsg(''); setQuote(null)
+    } catch (e) { setSwapMsg(''); setSwapSuccess(''); setError('Swap failed: ' + e.message) }
+    setSwapLoading(false)
+  }
+
+  const s = {
+    card: { borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', transition: 'all 0.2s', background: 'rgba(0,245,255,0.02)', border: '1px solid rgba(0,245,255,0.08)', marginBottom: 8 },
+    label: { fontFamily: 'Orbitron', fontSize: 9, color: 'rgba(0,245,255,0.6)', letterSpacing: '0.1em', marginBottom: 6, display: 'block' },
+    input: { width: '100%', padding: '9px 12px', background: 'rgba(0,255,136,0.03)', border: '1px solid rgba(0,255,136,0.2)', borderRadius: 6, color: '#00ff88', fontFamily: 'Share Tech Mono', fontSize: 13, outline: 'none' },
   }
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '2rem 1rem', position: 'relative', zIndex: 1 }}>
-      {/* Header */}
-      <div style={{ marginBottom: '2rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <div>
-            <h1 style={{ fontFamily: 'Orbitron', fontSize: 22, fontWeight: 700, color: '#00f5ff', letterSpacing: '0.05em' }}>
-              ◈ TOKEN RADAR
-            </h1>
-            <p style={{ fontFamily: 'Share Tech Mono', fontSize: 12, color: 'rgba(0,245,255,0.5)', marginTop: 4 }}>
-              LIVE FEED FROM BAGS.FM — SORTED BY LIFETIME FEES
-            </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+        <div>
+          <h1 style={{ fontFamily: 'Orbitron', fontSize: 22, fontWeight: 700, color: '#00f5ff', letterSpacing: '0.05em' }}>◈ TOKEN RADAR</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#00ff88', boxShadow: '0 0 6px #00ff88' }} />
+            <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: '#00ff88' }}>LIVE — SORTED BY LIFETIME FEES</span>
           </div>
-          <button onClick={loadFeed} disabled={loading} className="btn-cyber" style={{ padding: '8px 16px', borderRadius: 6 }}>
-            {loading ? '◌ SCANNING...' : '◎ REFRESH'}
-          </button>
         </div>
-        {/* Live indicator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <div className="pulse-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: '#00ff88' }} />
-          <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: '#00ff88' }}>LIVE</span>
-        </div>
+        <button onClick={loadFeed} disabled={loading} className="btn-cyber" style={{ padding: '8px 16px', borderRadius: 6 }}>
+          {loading ? '◌ SCANNING...' : '◎ REFRESH'}
+        </button>
       </div>
 
-      {error && (
-        <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(255,50,50,0.1)', border: '1px solid rgba(255,50,50,0.3)', color: '#ff6b6b', fontFamily: 'Share Tech Mono', fontSize: 12, marginBottom: 16 }}>
-          ⚠ {error}
-        </div>
-      )}
+      {error && <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(255,50,50,0.08)', border: '1px solid rgba(255,50,50,0.3)', color: '#ff6b6b', fontFamily: 'Share Tech Mono', fontSize: 11, marginBottom: 12 }}>⚠ {error}</div>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 380px' : '1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: selected ? '1fr 360px' : '1fr', gap: 16 }}>
         {/* Token list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div>
           {loading && !tokens.length ? (
-            Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} style={{ height: 72, borderRadius: 8, background: 'rgba(0,245,255,0.03)', border: '1px solid rgba(0,245,255,0.08)', animation: 'pulse 1.5s infinite' }} />
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} style={{ height: 68, borderRadius: 8, background: 'rgba(0,245,255,0.03)', border: '1px solid rgba(0,245,255,0.06)', marginBottom: 8 }} />
             ))
           ) : tokens.map((token, idx) => (
-            <div key={token.tokenMint}
-              className="neon-card"
-              style={{
-                borderRadius: 10, padding: '12px 16px',
-                display: 'flex', alignItems: 'center', gap: 12,
-                cursor: 'pointer',
-                border: selected?.tokenMint === token.tokenMint ? '1px solid rgba(0,245,255,0.4)' : '1px solid rgba(0,245,255,0.08)',
-                boxShadow: selected?.tokenMint === token.tokenMint ? '0 0 20px rgba(0,245,255,0.1)' : 'none',
-                transition: 'all 0.2s',
-              }}
+            <div key={token.tokenMint} style={{
+              ...s.card,
+              border: selected?.tokenMint === token.tokenMint ? '1px solid rgba(0,245,255,0.35)' : '1px solid rgba(0,245,255,0.08)',
+              boxShadow: selected?.tokenMint === token.tokenMint ? '0 0 15px rgba(0,245,255,0.08)' : 'none',
+            }}
               onClick={() => { setSelectedToken(token.tokenMint); setPage('dashboard') }}
             >
-              {/* Rank */}
-              <div style={{ width: 32, textAlign: 'center', fontFamily: 'Orbitron', fontSize: 14, fontWeight: 700,
+              <div style={{ width: 28, textAlign: 'center', fontFamily: 'Orbitron', fontSize: 13, fontWeight: 700,
                 color: idx === 0 ? '#ffd700' : idx === 1 ? '#c0c0c0' : idx === 2 ? '#cd7f32' : 'rgba(255,255,255,0.2)' }}>
                 {idx + 1}
               </div>
-
-              {/* Avatar */}
-              <div style={{ width: 42, height: 42, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, border: '1px solid rgba(0,245,255,0.2)', background: 'rgba(0,245,255,0.05)' }}>
+              <div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, border: '1px solid rgba(0,245,255,0.15)', background: 'rgba(0,245,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {token.image
                   ? <img src={token.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => e.target.style.display='none'} />
-                  : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Orbitron', fontSize: 12, color: '#00f5ff' }}>
-                      {token.symbol?.slice(0, 2)}
-                    </div>
+                  : <span style={{ fontFamily: 'Orbitron', fontSize: 11, color: '#00f5ff' }}>{token.symbol?.slice(0,2)}</span>
                 }
               </div>
-
-              {/* Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                  <span style={{ fontFamily: 'Orbitron', fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{token.name}</span>
-                  <span style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(0,245,255,0.6)' }}>${token.symbol}</span>
-                  <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                    background: 'rgba(0,255,136,0.1)', border: '1px solid rgba(0,255,136,0.2)', color: '#00ff88' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                  <span style={{ fontFamily: 'Orbitron', fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{token.name}</span>
+                  <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(0,245,255,0.5)' }}>${token.symbol}</span>
+                  <span style={{ fontFamily: 'Share Tech Mono', fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.15)', color: '#00ff88' }}>
                     {token.status || 'ACTIVE'}
                   </span>
                 </div>
-                <div style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>
-                  {shortAddress(token.tokenMint)}
-                </div>
+                <div style={{ fontFamily: 'Share Tech Mono', fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{shortAddress(token.tokenMint)}</div>
               </div>
-
-              {/* Fees */}
               <div style={{ textAlign: 'right', flexShrink: 0, marginRight: 8 }}>
-                <div style={{ fontFamily: 'Orbitron', fontSize: 13, fontWeight: 600, color: '#00f5ff' }}>
-                  {formatSol(token.lifetimeFees || 0)}
-                </div>
-                <div style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>lifetime fees</div>
+                <div style={{ fontFamily: 'Orbitron', fontSize: 12, fontWeight: 600, color: '#00f5ff' }}>{formatSol(token.lifetimeFees || 0)}</div>
+                <div style={{ fontFamily: 'Share Tech Mono', fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>fees</div>
               </div>
-
-              {/* Action buttons */}
-              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                <button
-                  className="btn-cyber btn-purple"
-                  style={{ padding: '5px 10px', borderRadius: 6, fontSize: 9 }}
-                  onClick={() => handleAIResearch(token)}
-                >
-                  🤖 AI
-                </button>
-                <button
-                  className="btn-cyber btn-green"
-                  style={{ padding: '5px 10px', borderRadius: 6, fontSize: 9 }}
-                  onClick={() => { setSelected(token); setAiResult('') }}
-                >
-                  BUY
-                </button>
+              <div style={{ display: 'flex', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                <button className="btn-cyber btn-purple" style={{ padding: '5px 8px', borderRadius: 5, fontSize: 9 }}
+                  onClick={() => handleAI(token)}>🤖 AI</button>
+                <button className="btn-cyber btn-green" style={{ padding: '5px 8px', borderRadius: 5, fontSize: 9 }}
+                  onClick={() => { setSelected(token); setMode('buy'); setAiResult(''); setSwapSuccess(''); setQuote(null) }}>BUY</button>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Side panel - AI Research / Buy */}
+        {/* Side panel */}
         {selected && (
           <div className="neon-card" style={{ borderRadius: 12, padding: '1.25rem', height: 'fit-content', position: 'sticky', top: 80 }}>
-            {/* Token header */}
+            {/* Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid rgba(0,245,255,0.1)' }}>
-              <div style={{ width: 40, height: 40, borderRadius: '50%', overflow: 'hidden', border: '1px solid rgba(0,245,255,0.3)', background: 'rgba(0,245,255,0.05)' }}>
+              <div style={{ width: 38, height: 38, borderRadius: '50%', overflow: 'hidden', border: '1px solid rgba(0,245,255,0.3)', background: 'rgba(0,245,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {selected.image && <img src={selected.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
               </div>
-              <div>
-                <div style={{ fontFamily: 'Orbitron', fontSize: 13, color: '#e2e8f0' }}>{selected.name}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: 'Orbitron', fontSize: 12, color: '#e2e8f0' }}>{selected.name}</div>
                 <div style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: '#00f5ff' }}>${selected.symbol}</div>
               </div>
-              <button onClick={() => { setSelected(null); setAiResult(''); setQuote(null) }}
-                style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
+              <button onClick={() => { setSelected(null); setAiResult(''); setQuote(null); setSwapSuccess('') }}
+                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', fontSize: 16 }}>✕</button>
             </div>
 
-            {/* AI Research */}
-            <div style={{ marginBottom: '1rem' }}>
-              <div style={{ fontFamily: 'Orbitron', fontSize: 10, color: 'rgba(0,245,255,0.7)', marginBottom: 8, letterSpacing: '0.1em' }}>
-                ◈ AI RESEARCH
-              </div>
-              {aiLoading ? (
-                <div style={{ padding: '1rem', background: 'rgba(123,47,255,0.05)', borderRadius: 8, border: '1px solid rgba(123,47,255,0.2)' }}>
-                  <div style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(167,139,250,0.8)' }}>
-                    ◌ Analyzing token data...
-                  </div>
-                  <div style={{ height: 2, background: 'rgba(123,47,255,0.2)', borderRadius: 1, marginTop: 8, overflow: 'hidden' }}>
-                    <div className="load-bar" style={{ height: '100%', background: '#7b2fff', borderRadius: 1 }} />
-                  </div>
-                </div>
-              ) : aiResult ? (
-                <div style={{ padding: '1rem', background: 'rgba(123,47,255,0.05)', borderRadius: 8, border: '1px solid rgba(123,47,255,0.2)', fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(220,200,255,0.9)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                  {aiResult}
-                </div>
-              ) : (
-                <button
-                  className="btn-cyber btn-purple"
-                  style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 11 }}
-                  onClick={() => handleAIResearch(selected)}
-                >
-                  🤖 ANALYZE WITH AI
-                </button>
-              )}
+            {/* Mode tabs */}
+            <div style={{ display: 'flex', gap: 6, marginBottom: '1rem' }}>
+              <button onClick={() => setMode('ai')} className={mode === 'ai' ? 'btn-cyber btn-purple' : 'btn-cyber'}
+                style={{ flex: 1, padding: '7px', borderRadius: 6, fontSize: 10 }}>🤖 AI RESEARCH</button>
+              <button onClick={() => setMode('buy')} className={mode === 'buy' ? 'btn-cyber btn-green' : 'btn-cyber'}
+                style={{ flex: 1, padding: '7px', borderRadius: 6, fontSize: 10 }}>◎ BUY TOKEN</button>
             </div>
 
-            {/* Buy section */}
-            <div>
-              <div style={{ fontFamily: 'Orbitron', fontSize: 10, color: 'rgba(0,255,136,0.7)', marginBottom: 8, letterSpacing: '0.1em' }}>
-                ◈ BUY TOKEN
+            {/* AI Panel */}
+            {mode === 'ai' && (
+              <div>
+                {aiLoading ? (
+                  <div style={{ padding: '1rem', background: 'rgba(123,47,255,0.05)', borderRadius: 8, border: '1px solid rgba(123,47,255,0.2)' }}>
+                    <div style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(167,139,250,0.8)', marginBottom: 8 }}>◌ Analyzing...</div>
+                    <div style={{ height: 2, background: 'rgba(123,47,255,0.15)', borderRadius: 1, overflow: 'hidden' }}>
+                      <div className="load-bar" style={{ height: '100%', background: '#7b2fff', borderRadius: 1 }} />
+                    </div>
+                  </div>
+                ) : aiResult ? (
+                  <div style={{ padding: '1rem', background: 'rgba(123,47,255,0.05)', borderRadius: 8, border: '1px solid rgba(123,47,255,0.2)', fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(220,200,255,0.9)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                    {aiResult}
+                  </div>
+                ) : (
+                  <button className="btn-cyber btn-purple" style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 11 }}
+                    onClick={() => handleAI(selected)}>🤖 ANALYZE WITH AI →</button>
+                )}
               </div>
-              <div style={{ marginBottom: 8 }}>
-                <label style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.4)', display: 'block', marginBottom: 4 }}>AMOUNT (SOL)</label>
-                <input
-                  type="number"
-                  value={buyAmount}
-                  onChange={e => setBuyAmount(e.target.value)}
-                  step="0.001"
-                  min="0.001"
-                  style={{
-                    width: '100%', padding: '8px 12px',
-                    background: 'rgba(0,255,136,0.03)',
-                    border: '1px solid rgba(0,255,136,0.2)',
-                    borderRadius: 6, color: '#00ff88',
-                    fontFamily: 'Share Tech Mono', fontSize: 13,
-                    outline: 'none',
-                  }}
-                />
+            )}
+
+            {/* Buy Panel */}
+            {mode === 'buy' && (
+              <div>
+                {!publicKey ? (
+                  <div style={{ textAlign: 'center', padding: '1rem' }}>
+                    <p style={{ fontFamily: 'Share Tech Mono', fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 12 }}>Connect wallet to swap</p>
+                    <WalletMultiButton />
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ marginBottom: 10 }}>
+                      <label style={s.label}>AMOUNT (SOL)</label>
+                      <input type="number" value={buyAmount} onChange={e => { setBuyAmount(e.target.value); setQuote(null) }}
+                        step="0.001" min="0.001" style={s.input} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 5, marginBottom: 12 }}>
+                      {['0.01','0.05','0.1','0.5'].map(a => (
+                        <button key={a} onClick={() => { setBuyAmount(a); setQuote(null) }}
+                          style={{ flex: 1, padding: '4px', background: buyAmount === a ? 'rgba(0,255,136,0.15)' : 'rgba(0,255,136,0.03)',
+                            border: '1px solid rgba(0,255,136,0.2)', borderRadius: 4, color: '#00ff88',
+                            fontFamily: 'Share Tech Mono', fontSize: 10, cursor: 'pointer' }}>
+                          {a}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Quote info */}
+                    {quote && (
+                      <div style={{ padding: '10px 12px', background: 'rgba(0,255,136,0.04)', border: '1px solid rgba(0,255,136,0.15)', borderRadius: 8, marginBottom: 10 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>You get</span>
+                          <span style={{ fontFamily: 'Orbitron', fontSize: 11, color: '#00ff88' }}>
+                            {(Number(quote.outAmount) / 1e6).toLocaleString()} {selected.symbol}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>Price impact</span>
+                          <span style={{ fontFamily: 'Share Tech Mono', fontSize: 10, color: parseFloat(quote.priceImpactPct) > 5 ? '#ff6b6b' : '#00ff88' }}>
+                            {parseFloat(quote.priceImpactPct || 0).toFixed(2)}%
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {swapMsg && (
+                      <div style={{ padding: '8px 12px', background: 'rgba(0,245,255,0.05)', border: '1px solid rgba(0,245,255,0.2)', borderRadius: 6, marginBottom: 10, fontFamily: 'Share Tech Mono', fontSize: 11, color: '#00f5ff', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 12, height: 12, border: '2px solid #00f5ff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+                        {swapMsg}
+                      </div>
+                    )}
+
+                    {swapSuccess && (
+                      <div style={{ padding: '8px 12px', background: 'rgba(0,255,136,0.08)', border: '1px solid rgba(0,255,136,0.3)', borderRadius: 6, marginBottom: 10, fontFamily: 'Share Tech Mono', fontSize: 11, color: '#00ff88' }}>
+                        {swapSuccess}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {!quote ? (
+                        <button className="btn-cyber" style={{ padding: '10px', borderRadius: 8, fontSize: 11 }}
+                          onClick={handleGetQuote} disabled={quoteLoading}>
+                          {quoteLoading ? '◌ Getting quote...' : '◎ GET QUOTE'}
+                        </button>
+                      ) : (
+                        <button className="btn-cyber btn-green" style={{ padding: '10px', borderRadius: 8, fontSize: 11 }}
+                          onClick={handleSwap} disabled={swapLoading}>
+                          {swapLoading ? '◌ Swapping...' : `◎ SWAP ${buyAmount} SOL → ${selected.symbol}`}
+                        </button>
+                      )}
+                      <button className="btn-cyber" style={{ padding: '8px', borderRadius: 6, fontSize: 10 }}
+                        onClick={() => setQuote(null)}>RESET</button>
+                    </div>
+                  </>
+                )}
               </div>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {['0.01', '0.05', '0.1', '0.5'].map(amt => (
-                  <button key={amt} onClick={() => setBuyAmount(amt)}
-                    style={{ flex: 1, padding: '4px', background: buyAmount === amt ? 'rgba(0,255,136,0.15)' : 'rgba(0,255,136,0.03)',
-                      border: '1px solid rgba(0,255,136,0.2)', borderRadius: 4, color: '#00ff88',
-                      fontFamily: 'Share Tech Mono', fontSize: 10, cursor: 'pointer' }}>
-                    {amt}
-                  </button>
-                ))}
-              </div>
-              <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: 6, fontFamily: 'Share Tech Mono', fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: '0.75rem' }}>
-                ⚠ Buying on mainnet — make sure you're ready
-              </div>
-              <a
-                href={`https://bags.fm/${selected.tokenMint}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-cyber btn-green"
-                style={{ display: 'block', width: '100%', padding: '10px', borderRadius: 8, fontSize: 11, textAlign: 'center', textDecoration: 'none' }}
-              >
-                ◎ BUY ON BAGS.FM →
-              </a>
-            </div>
+            )}
           </div>
         )}
       </div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
