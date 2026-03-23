@@ -96,13 +96,14 @@ export default function LaunchToken({ setPage }) {
         configKey,
       })
 
-      const txBuffer = Buffer.from(txBase64, 'base64')
+      const txBuffer = Uint8Array.from(atob(txBase64), c => c.charCodeAt(0))
       let tx
       try { tx = VersionedTransaction.deserialize(txBuffer) }
       catch { tx = Transaction.from(txBuffer) }
 
       const signed = await signTransaction(tx)
-      const signedB64 = Buffer.from(signed.serialize()).toString('base64')
+      const signedBytes = signed.serialize()
+      const signedB64 = btoa(String.fromCharCode(...signedBytes))
       const signature = await sendTransaction(signedB64)
 
       setResult({ tokenMint, signature, name: form.name, symbol: form.symbol.toUpperCase() })
