@@ -33,7 +33,7 @@ Give in 100 words max:
         'X-Title': 'Bags Creator Hub',
       },
       body: JSON.stringify({
-        model: 'openrouter/free', // Auto-select dari semua model gratis yang tersedia
+        model: 'google/gemini-2.0-flash-lite-001', // $0.075/M tokens — sangat murah
         max_tokens: 250,
         messages: [{ role: 'user', content: prompt }],
       }),
