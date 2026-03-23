@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Buffer } from 'buffer'
+import bs58 from 'bs58'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { createTokenInfo, createLaunchTransaction, sendTransaction, getBagsPools } from '../services/bagsApi'
@@ -88,7 +89,7 @@ export default function LaunchToken({ setPage }) {
       // Step 4: Buat dan sign transaksi
       setStepMsg('4/4 — Sign dengan wallet kamu...')
       const initialBuyLamports = Math.floor(Number(form.initialBuy) * SOL_TO_LAMPORTS)
-      const txBase64 = await createLaunchTransaction({
+      const txBase58 = await createLaunchTransaction({
         ipfs: tokenMetadata,
         tokenMint,
         wallet: publicKey.toString(),
@@ -96,16 +97,16 @@ export default function LaunchToken({ setPage }) {
         configKey,
       })
 
-      // Deserialize transaksi pakai Buffer (sudah di-import)
-      const txBuffer = Buffer.from(txBase64, 'base64')
+      // Response adalah Base58 — decode dulu sebelum deserialize
+      const txBuffer = bs58.decode(txBase58)
       let tx
       try {
         tx = VersionedTransaction.deserialize(txBuffer)
       } catch {
-        tx = Transaction.from(txBuffer)
+        tx = Transaction.from(Buffer.from(txBuffer))
       }
 
-      // Sign dan serialize
+      // Sign dan kirim
       const signed = await signTransaction(tx)
       const signedB64 = Buffer.from(signed.serialize()).toString('base64')
       const signature = await sendTransaction(signedB64)
