@@ -5,6 +5,7 @@ import { useWallet } from '@solana/wallet-adapter-react'
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { createTokenInfo, createLaunchTransaction, sendTransaction, getBagsPools } from '../services/bagsApi'
 import { VersionedTransaction, Transaction } from '@solana/web3.js'
+import { saveTokenToHistory } from './MyTokens'
 
 const SOL_TO_LAMPORTS = 1_000_000_000
 const IMGBB_API_KEY = '8be3cfa2c9a1b53c82039a958ab9894e'
@@ -108,11 +109,11 @@ export default function LaunchToken({ setPage }) {
 
       // Sign dan kirim
       const signed = await signTransaction(tx)
-      const signedBytes = signed.serialize()
-      const signedB58 = bs58.encode(signedBytes)
-      const signature = await sendTransaction(signedB58)
+      const signedB64 = Buffer.from(signed.serialize()).toString('base64')
+      const signature = await sendTransaction(signedB64)
 
       setResult({ tokenMint, signature, name: form.name, symbol: form.symbol.toUpperCase() })
+      saveTokenToHistory(tokenMint, form.name, form.symbol.toUpperCase(), imagePreview)
       setStep('done')
 
     } catch (e) {
